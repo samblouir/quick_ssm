@@ -17,7 +17,7 @@ Similar Papers:
 
 
 <div align="center">
-  <a href="https://github.com/samblouir/quick_ssm/blob/main/birdie_emnlp_2024_poster.jpg?raw=true"><img src="https://github.com/samblouir/quick_ssm/blob/main/quickssm.png?raw=true" alt="quick ssm logo of a rocket" width="200" /></a>
+  <img src="https://github.com/samblouir/quick_ssm/blob/main/quickssm.png?raw=true" alt="quick ssm logo of a rocket" width="200" />
 </div>
 
 ## Installation
