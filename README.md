@@ -47,7 +47,12 @@ cd quick_ssm
 pip install -e .
 ```
 
-*Note: Requires a very recent PyTorch version with CUDA and Triton 3.1+ (which typically requires an NVIDIA GPU)*
+*Note: Quick SSM requires a very recent PyTorch version with CUDA and Triton 3.1+ (which typically requires an NVIDIA GPU).*
+
+*Quick SSM has been tested on the following NVIDIA setups:*
+- Torch 3.7, 1x NVIDIA 3090 with CUDA 12.4 and 12.6
+- Torch 3.7, 4x NVIDIA A100 with CUDA 12.4
+- Torch 3.7, 4x NVIDIA H100 with CUDA 12.4
 
 ## Usage
 
