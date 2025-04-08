@@ -148,13 +148,14 @@ All tensors are of shape `(B, L, D)`, where:
 
 
 ## TODO / Future Work
+* Reduce unnecessary memory usage by avoiding additional materializations.
 * Add tensor-parallel support for the scan.
 * Add automatic padding to support non-power-of-2 sequence lengths.
 * Verify torch.compile compatibility with distributed training.
 * Complete Gradient Checkpointing support to reduce VRAM usage during training.
 * Explore additional VRAM optimization strategies.
 * Implement a fast inference/generation mode (e.g., for autoregressive sampling).
-* Investigate support for related SSM variants like those used in [Hawk](https://arxiv.org/abs/2402.19427).
+* Add support for [Hawk](https://arxiv.org/abs/2402.19427), which the original [Birdie](https://github.com/samblouir/birdie) paper had.
 
 ## Not currently planned, but possible
 * Pipeline scan, splitting the sequence time-wise across devices.
