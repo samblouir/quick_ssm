@@ -20,6 +20,15 @@ Similar Papers:
 
 <div align="center">
   <img src="https://github.com/samblouir/quick_ssm/blob/main/quickssm.png?raw=true" alt="quick ssm logo of a rocket" width="200" />
+  <h3>You are here (Quick SSM)!</h3>
+</div>
+
+
+<div align="center">
+<a href="https://github.com/samblouir/quick_llama/">
+  <img src="https://github.com/samblouir/quick_llama/blob/main/quickllama.png?raw=true" alt="quick llama logo - a llama wearing a racing helmet and running so fast flames" width="200" />
+  <h3>Check out the Quick LLaMa repo!</h3>
+  </a>
 </div>
 
 ## Installation
@@ -38,7 +47,7 @@ cd quick_ssm
 pip install -e .
 ```
 
-*Note: Requires a compatible PyTorch installation and Triton (which typically requires an NVIDIA GPU and Linux).*
+*Note: Requires a very recent PyTorch version with CUDA and Triton 3.1+ (which typically requires an NVIDIA GPU)*
 
 ## Usage
 
