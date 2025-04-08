@@ -17,6 +17,7 @@ Similar Papers:
 * [Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models
 ](https://arxiv.org/abs/2402.19427)
 
+---
 
 <div align="center">
   <img src="https://github.com/samblouir/quick_ssm/blob/main/quickssm.png?raw=true" alt="quick ssm logo of a rocket" width="200" />
@@ -24,12 +25,25 @@ Similar Papers:
 </div>
 
 
+---
+
 <div align="center">
 <a href="https://github.com/samblouir/quick_llama/">
   <img src="https://github.com/samblouir/quick_llama/blob/main/quickllama.png?raw=true" alt="quick llama logo - a llama wearing a racing helmet and running so fast flames" width="200" />
   <h3>Check out the Quick LLaMa repo!</h3>
   </a>
 </div>
+
+---
+
+
+
+## Key Features
+
+* **Block Scan Algorithm:** Implements the parallel prefix sum (scan) algorithm over blocks, enabling efficient processing of long sequences.
+* **Triton Kernels:** Pure Triton kernels improve efficiency.
+* **PyTorch Integration with an Interface and Layer:** `quick_ssm.scan_interface.scan` and `quick_ssm.layers.SSM` are included for easy integration into existing Torch models or codebases.
+
 
 ## Installation
 
@@ -110,14 +124,6 @@ class AnyTorchModel(nn.Module):
 ```
 
 
-
-
-## Key Features
-
-* **High-Performance Kernels:** Utilizes Triton kernels for efficient parallel execution of the associative scan operation.
-* **Block Scan Algorithm:** Implements the parallel prefix sum (scan) algorithm over blocks, enabling efficient processing of long sequences.
-* **PyTorch Integration:** Offers `quick_ssm.scan_interface.scan`, a `torch.autograd.Function`, allowing seamless use inside PyTorch models.
-* **SSM Layer:** Provides a simple `quick_ssm.layers.SSM` layer for easy integration into existing models.
 
 ## Core Concept: SSM Scan
 
