@@ -14,6 +14,8 @@ This implementation is inspired by code and techniques found in:
 Similar Papers:
 * [Gated State Spaces](https://arxiv.org/abs/2206.13947)
 * [Mamba: Linear-Time Sequence Modeling with Selective State Spaces](https://arxiv.org/abs/2312.00752)
+* [Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models
+](https://arxiv.org/abs/2402.19427)
 
 
 <div align="center">
