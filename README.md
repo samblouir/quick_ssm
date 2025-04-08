@@ -58,7 +58,10 @@ import torch
 from quick_ssm.scan_interface import scan
 
 device = 'cuda'
-dtype = torch.float16 # fp16 stays finite later in training after the intermediates calm down, I recommend using fp32 for the first few thousand training steps. Your mileage will vary.
+# fp16 stays finite later in training after the state magnitude calms down, which happens during training as noted in Birdie's paper.
+# I would recommend using fp32 for the first few thousand training steps.
+# Your mileage will vary.
+dtype = torch.float16
 
 # Example dimensions (Batch, Sequence Length, Hidden Dimension)
 # Note: Sequence length L must be a power of 2
@@ -93,7 +96,6 @@ class AnyTorchModel(nn.Module):
 			hidden_size=hidden_size,
 			state_size_mult=(hidden_size * 4),
 			dtype=torch.float32, # Parameter dtype
-			# (FOR NLP: USE FP32 FOR THE FIRST FEW THOUSAND PRE-TRAINING STEPS TO AVOID NaN with FP16.)
 			compute_dtype=torch.float16, # Computation dtype 
 		)
 			
