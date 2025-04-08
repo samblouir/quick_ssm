@@ -1,4 +1,4 @@
-# Quick SSM: Efficient Triton-based SSM Scan Operations
+# Quick SSM: Efficient Triton-based Scan for RNNs/SSMs
 
 Quick SSM provides an optimized implementation of the associative scan operation using [Triton](https://github.com/openai/triton) kernels for high performance.
 It includes a convenient PyTorch interface for the scan function for easy integration into existing SSM codebases, asa well as a layer to easily add an SSM layer to your model.
@@ -7,9 +7,15 @@ It includes a convenient PyTorch interface for the scan function for easy integr
 This implementation is inspired by code and techniques found in:
 * [accelerated-scan](https://github.com/proger/accelerated-scan) by Volodymyr Kyrylov
 * [Mamba: The Hard Way](https://srush.github.io/annotated-mamba/hard.html) by Sasha Rush
-* [Gated State Spaces Layer](https://arxiv.org/abs/2206.13947) (Note: The gating structure here is a simplified version)
+
+Papers:
+* [Gated State Spaces](https://arxiv.org/abs/2206.13947)
 * [Mamba: Linear-Time Sequence Modeling with Selective State Spaces](https://arxiv.org/abs/2312.00752)
 
+
+<div align="center">
+  <a href="https://github.com/samblouir/quick_ssm/blob/main/birdie_emnlp_2024_poster.jpg?raw=true"><img src="https://github.com/samblouir/quick_ssm/blob/main/quickssm.png?raw=true" alt="quick ssm logo of a rocket" width="200" /></a>
+</div>
 
 ## Installation
 
