@@ -18,7 +18,7 @@ class RMSNorm(nn.Module):
         norm = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
         return x * (self.weight / norm)
     
-    
+
 class SSM(nn.Module):
     """
     A recurrent SSM
@@ -53,6 +53,8 @@ class SSM(nn.Module):
         self.x_proj = nn.LinearProjection(hidden_size, state_size_dim, **kwargs)
         self.sidegate_proj = nn.LinearProjection(hidden_size, state_size_dim, **kwargs)
         self.output_proj = nn.LinearProjection(hidden_size, state_size_dim, **kwargs)
+
+        self.compute_dtype = kwargs.get("compute_dtype", torch.float32)
 
         self.wo = nn.LinearProjection(state_size_dim, hidden_size, **kwargs)
 
@@ -97,10 +99,10 @@ class SSM(nn.Module):
 
         A_elements = F.sigmoid(A_elements)
 
-        A_elements = A_elements.to(torch.float16)
-        x_elements = x_elements.to(torch.float16)
-        sidegate_elements = sidegate_elements.to(torch.float16)
-        gate = gate.to(torch.float16)
+        A_elements = A_elements.to(self.compute_dtype)
+        x_elements = x_elements.to(self.compute_dtype)
+        sidegate_elements = sidegate_elements.to(self.compute_dtype)
+        gate = gate.to(self.compute_dtype)
         
 
 

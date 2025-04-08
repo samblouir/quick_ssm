@@ -10,6 +10,81 @@ This implementation is inspired by code and techniques found in:
 * [Gated State Spaces Layer](https://arxiv.org/abs/2206.13947) (Note: The gating structure here is a simplified version)
 * [Mamba: Linear-Time Sequence Modeling with Selective State Spaces](https://arxiv.org/abs/2312.00752)
 
+
+## Installation
+
+You can install the package directly from GitHub:
+
+```bash
+pip install git+https://github.com/samblouir/quick_ssm
+```
+
+Alternatively, install it in editable mode for development:
+
+```bash
+git clone https://github.com/samblouir/quick_ssm
+cd quick_ssm
+pip install -e .
+```
+
+*Note: Requires a compatible PyTorch installation and Triton (which typically requires an NVIDIA GPU and Linux).*
+
+## Usage
+
+Here's a basic example using the `scan_interface`:
+
+```python
+import torch
+from quick_ssm.scan_interface import scan
+
+device = 'cuda'
+dtype = torch.float16 # fp16 stays finite later in training after the intermediates calm down, I recommend using fp32 for the first few thousand training steps. Your mileage will vary.
+
+# Example dimensions (Batch, Sequence Length, Hidden Dimension)
+# Note: Sequence length L must be a power of 2
+B =	4
+L = 2048
+D = 16
+
+x = torch.randn(B, L, D, device=device, dtype=dtype, requires_grad=True)
+a = torch.rand(B, L, D, device=device, dtype=dtype, requires_grad=True)
+b = torch.randn(B, L, D, device=device, dtype=dtype, requires_grad=True)
+c = torch.randn(B, L, D, device=device, dtype=dtype, requires_grad=True)
+
+# Note: h(t) is currently materialized.
+# h(t) = a(t) * h(t-1) + b(t) * x(t)
+# y(t) = c(t) * h(t)
+# `checkpoint=False` currently (checkpointing is WIP)
+y = scan(x, a, b, c, checkpoint=False)
+```
+
+### Layer Example
+
+```python
+import torch
+import torch.nn as nn
+from quick_ssm.layers import SSM
+
+# Basic Torch Model
+class AnyTorchModel(nn.Module):
+	def __init__(self, hidden_size):
+		super(AnyTorchModel, self).__init__()
+		self.ssm = SSM(
+			hidden_size=hidden_size,
+			state_size_mult=(hidden_size * 4),
+			dtype=torch.float32, # Parameter dtype
+			# (FOR NLP: USE FP32 FOR THE FIRST FEW THOUSAND PRE-TRAINING STEPS TO AVOID NaN with FP16.)
+			compute_dtype=torch.float16, # Computation dtype 
+		)
+			
+
+	def forward(self, x):
+		return self.ssm(x)
+```
+
+
+
+
 ## Key Features
 
 * **High-Performance Kernels:** Utilizes Triton kernels for efficient parallel execution of the associative scan operation.
@@ -27,12 +102,15 @@ This library efficiently computes the following core SSM recurrence relation:
 Where:
 * `x(t)`: Input sequence tensor at time `t`.
 * `h(t)`: Hidden state tensor at time `t`.
-* `a(t)`: State transition factor (often related to decay).
+* `a(t)`: State transition factor
 * `b(t)`: Input gate/projection factor.
 * `c(t)`: Output gate/projection factor (sometimes called a side gate).
 * `y(t)`: Output sequence tensor at time `t`.
 
-The tensors `a`, `b`, and `c` are typically learned parameters or dynamically computed within a larger neural network layer.
+All tensors are of shape `(B, L, D)`, where:
+* `B`: Batch size
+* `L`: Sequence length (must be a power of 2)
+* `D`: Hidden dimension
 
 
 
@@ -50,11 +128,16 @@ The tensors `a`, `b`, and `c` are typically learned parameters or dynamically co
 
 
 ## TODO / Future Work
-
+* Add tensor-parallel support for the scan.
+* Add automatic padding to support non-power-of-2 sequence lengths.
+* Verify torch.compile compatibility with distributed training.
 * Complete Gradient Checkpointing support to reduce VRAM usage during training.
 * Explore additional VRAM optimization strategies.
 * Implement a fast inference/generation mode (e.g., for autoregressive sampling).
 * Investigate support for related SSM variants like those used in [Hawk](https://arxiv.org/abs/2402.19427).
+
+## Not currently planned, but possible
+* Pipeline scan, splitting the sequence time-wise across devices.
 
 ## Contributing
 
