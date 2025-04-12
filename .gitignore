@@ -6,8 +6,8 @@ old/
 src/forward_only.py
 src/test_backwards_2.py
 src/tests.py
-src/triton_backwards.py
-src/triton_forwards.py
+#src/triton_backwards.py
+#src/triton_forwards.py
 src/triton_shared.py
 src/triton_scan.py
 
