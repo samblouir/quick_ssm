@@ -1,37 +1,27 @@
-# test_backwards.py
 import torch
+import time
 from naive_baseline import naive_full_3d
 from triton_backwards import block_scan_backward_3d
 
-def compute_reference_gradients(
-    x, a, b, c, loss_func=lambda y: y.sum()
-):
-    """Compute gradients via autograd using the reference (naive) implementation."""
-    h_naive, y_naive = naive_full_3d(x, a, b, c)
-    loss = loss_func(y_naive)
+def compute_reference_gradients(x, a, b, c, loss_func=lambda y: y.sum()):
+    """Compute reference gradients via PyTorch Autograd with naive SSM."""
+    h, y = naive_full_3d(x, a, b, c)
+    loss = loss_func(y)
     loss.backward()
-    dx = x.grad.detach().clone() if x.grad is not None else None
-    da = a.grad.detach().clone() if a.grad is not None else None
-    db = b.grad.detach().clone() if b.grad is not None else None
-    dc = c.grad.detach().clone() if c.grad is not None else None
-    # Clean up for next usage
-    x.grad, a.grad, b.grad, c.grad = None, None, None, None
-    return h_naive, y_naive, (dx, da, db, dc)
+    grads = tuple((v.grad.detach().clone() if v.grad is not None else None) for v in (x, a, b, c))
+    for v in (x, a, b, c):
+        v.grad = None
+    return h.detach(), y.detach(), grads
 
-def compute_custom_gradients(
-    a, b, c, x, h, grad_y
-):
-    """Run the custom Triton backward pass to get gradients."""
-    # All forward values should be detached (no grad tracking)
-    dx, da, db, dc = block_scan_backward_3d(
-        a.detach(), b.detach(), c.detach(), x.detach(), h.detach(), grad_y
-    )
+def compute_custom_gradients(a, b, c, x, h, grad_y):
+    """Compute custom gradients using Triton backward kernel."""
+    dx, da, db, dc = block_scan_backward_3d(a.detach(), b.detach(), c.detach(), x.detach(), h.detach(), grad_y)
     return dx, da, db, dc
 
 def print_max_error(ref, actual, name):
     if ref is None or actual is None: return
-    diff = (ref - actual).abs().max().item()
-    print(f"    {name}: max abs diff={diff:.3e}, ref min/max=({ref.min().item():.3e},{ref.max().item():.3e}), actual min/max=({actual.min().item():.3e},{actual.max().item():.3e})")
+    diff = (ref - actual).abs()
+    print(f"    {name}: max|diff|={diff.max().item():.3e}, mean|diff|={diff.mean().item():.3e}, ref min/max=({ref.min().item():.3e},{ref.max().item():.3e}), actual min/max=({actual.min().item():.3e},{actual.max().item():.3e})")
 
 def test_backwards_scan(
     batch_size=2,
@@ -42,41 +32,60 @@ def test_backwards_scan(
     rtol=1e-3,
     seed=0,
     verbose=False,
+    triton_warmup_iters=2,
 ):
-    """Verifies gradients of the custom 'block_scan_backward_3d' against autograd reference."""
+    """
+    Checks correctness of block_scan_backward_3d (Triton) gradients against autograd (naive SSM).
+    """
+    print("\n========== Backward Scan Test ==========")
+    print(f"[Config] B={batch_size}, L={seq_len}, D={dim}, device={device_str}, atol={atol}, rtol={rtol}")
+
     device = torch.device("cuda" if device_str == "cuda" and torch.cuda.is_available() else "cpu")
     if device_str == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA was requested but not available!")
-
+        raise RuntimeError("CUDA requested but not available!")
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
+    if device.type == "cuda":
         torch.cuda.manual_seed_all(seed)
 
-    dtype = torch.float32
+    x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float32, requires_grad=True)
+    a = (torch.rand(batch_size, seq_len, dim, device=device, dtype=torch.float32) * 0.1 + 0.9).requires_grad_()
+    b = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float32, requires_grad=True)
+    c = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float32, requires_grad=True)
 
-    x = torch.randn(batch_size, seq_len, dim, device=device, dtype=dtype, requires_grad=True)
-    a = (torch.rand(batch_size, seq_len, dim, device=device, dtype=dtype) * 0.1 + 0.9).requires_grad_()
-    b = torch.randn(batch_size, seq_len, dim, device=device, dtype=dtype, requires_grad=True)
-    c = torch.randn(batch_size, seq_len, dim, device=device, dtype=dtype, requires_grad=True)
-
-    if verbose:
-        print(f"\n[test] Shapes: x {x.shape}, a {a.shape}, b {b.shape}, c {c.shape}, device={device}, dtype={dtype}")
-
-    # ----- Reference Gradients -----
+    # Reference
+    print("Running PyTorch/naive autograd reference...")
+    t0 = time.time()
     try:
         h_naive, y_naive, (dx_ref, da_ref, db_ref, dc_ref) = compute_reference_gradients(x, a, b, c)
     except TypeError as e:
-        raise ImportError("Check your naive_full_3d signature and return values: " + str(e))
-
+        print("\nError: Check your naive_full_3d signature and return values:", e)
+        raise ImportError("Incorrect signature in naive_full_3d.") from e
+    t1 = time.time()
+    print(f"  Naive/Autograd time: {t1-t0:.3f} s")
     if verbose:
-        print("[ref] dx norm:", dx_ref.norm().item(), "\n      da norm:", da_ref.norm().item(), "\n      db norm:", db_ref.norm().item(), "\n      dc norm:", dc_ref.norm().item())
+        print("[autograd] dx norm:", dx_ref.norm().item(), "\n      da norm:", da_ref.norm().item(), "\n      db norm:", db_ref.norm().item(), "\n      dc norm:", dc_ref.norm().item())
 
-    # ----- Custom Gradients (Triton) -----
+    # Custom (Triton)
     grad_y = torch.ones_like(y_naive)
-    dx_custom, da_custom, db_custom, dc_custom = compute_custom_gradients(a, b, c, x, h_naive, grad_y)
+    print("Running custom Triton backward (warmup x%d)..." % triton_warmup_iters)
+    # Warmup
+    for _ in range(triton_warmup_iters):
+        _ = block_scan_backward_3d(a.detach(), b.detach(), c.detach(), x.detach(), h_naive.detach(), grad_y)
+        if device.type == "cuda":
+            torch.cuda.synchronize()
 
-    # ----- Comparison -----
-    allclose = lambda a, b: (a is not None and b is not None and torch.allclose(a, b, atol=atol, rtol=rtol))
+    print("Timing custom Triton backward...")
+    t2 = time.time()
+    dx_custom, da_custom, db_custom, dc_custom = block_scan_backward_3d(
+        a.detach(), b.detach(), c.detach(), x.detach(), h_naive.detach(), grad_y
+    )
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    t3 = time.time()
+    print(f"  Triton backward time: {t3-t2:.3f} s")
+
+    # Check
+    def allclose(a, b): return (a is not None and b is not None and torch.allclose(a, b, atol=atol, rtol=rtol))
     all_ok = True
     errors = []
 
@@ -97,29 +106,23 @@ def test_backwards_scan(
 
     if not all_ok:
         msg = "[FAIL] Gradient mismatch for " + ", ".join(errors)
-        # Show max diff for each incorrect
-        for name, ref, actual in [("dx", dx_ref, dx_custom), ("da", da_ref, da_custom), ("db", db_ref, db_custom), ("dc", dc_ref, dc_custom)]:
-            if name in errors: print_max_error(ref, actual, name)
-        raise AssertionError(f"{msg} (tolerances: atol={atol}, rtol={rtol})")
+        raise AssertionError(f"{msg} (atol={atol}, rtol={rtol})")
 
     print("\n[SUCCESS] All custom backward gradients match autograd gradients within tolerance.")
+
     return True
 
 if __name__ == "__main__":
     try:
         test_backwards_scan(
-            batch_size=2,
-            seq_len=32_768,
-            dim=8,
-            device_str="cuda",
-            atol=1e-4,
-            rtol=1e-3,
-            verbose=False,
+            batch_size=2, seq_len=2048, dim=8, device_str="cuda", atol=1e-5, rtol=1e-3, verbose=False
+        )
+        test_backwards_scan(
+            batch_size=1, seq_len=1024, dim=1, device_str="cuda", atol=1e-5, rtol=1e-3, verbose=True
         )
     except ImportError as e:
-        print("\nImport Error:", e, "\nCheck that 'naive_baseline.py' and 'triton_backwards.py' are present and correctly implemented.")
+        print("\nImport Error:", e, "\nCheck that 'naive_baseline.py' and 'triton_backwards.py' are present and correct.")
     except AssertionError as e:
         print("\n[ERROR] GRADIENT CHECK FAILED:", str(e))
     except Exception as e:
         print("\n[UNEXPECTED ERROR]", type(e).__name__, ":", str(e))
-
