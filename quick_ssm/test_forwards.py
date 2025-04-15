@@ -5,8 +5,8 @@ Tests correctness and performance of block_scan_forward_3d against a naive refer
 import torch
 import time
 
-from naive_baseline import naive_forward_3d
-from triton_forwards import block_scan_forward_3d
+from quick_ssm.naive_baseline import naive_forward_3d
+from quick_ssm.triton_forwards import block_scan_forward_3d
 
 
 def pretty_diff_stats(a, b):

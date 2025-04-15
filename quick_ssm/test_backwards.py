@@ -1,7 +1,7 @@
 import torch
 import time
-from quick_ssm.src.naive_baseline import naive_full_3d
-from quick_ssm.src.triton_backwards import block_scan_backward_3d
+from quick_ssm.naive_baseline import naive_full_3d
+from quick_ssm.triton_backwards import block_scan_backward_3d
 
 def compute_reference_gradients(x, a, b, c, loss_func=lambda y: y.sum()):
     """Compute reference gradients via PyTorch Autograd with naive SSM."""

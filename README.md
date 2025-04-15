@@ -11,7 +11,7 @@ This implementation is inspired by code and techniques found in:
 * [accelerated-scan](https://github.com/proger/accelerated-scan) by Volodymyr Kyrylov
 * [Mamba: The Hard Way](https://srush.github.io/annotated-mamba/hard.html) by Sasha Rush
 
-Similar Papers:
+Relevant Papers:
 * [Gated State Spaces](https://arxiv.org/abs/2206.13947)
 * [Mamba: Linear-Time Sequence Modeling with Selective State Spaces](https://arxiv.org/abs/2312.00752)
 * [Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models
@@ -93,10 +93,11 @@ a = torch.rand(B, L, D, device=device, dtype=dtype, requires_grad=True)
 b = torch.randn(B, L, D, device=device, dtype=dtype, requires_grad=True)
 c = torch.randn(B, L, D, device=device, dtype=dtype, requires_grad=True)
 
-# Note: h(t) is currently materialized.
+## The scan function computes the following recurrence relation:
 # h(t) = a(t) * h(t-1) + b(t) * x(t)
 # y(t) = c(t) * h(t)
 # `checkpoint=False` currently (checkpointing is WIP)
+# Note: h(t) is currently materialized.
 y = scan(x, a, b, c, checkpoint=False)
 ```
 

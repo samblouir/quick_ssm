@@ -42,9 +42,6 @@ Homepage = "https://github.com/samblouir/quick_ssm"
 Repository = "https://github.com/samblouir/quick_ssm"
 Issues = "https://github.com/samblouir/quick_ssm/issues"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
 [project.optional-dependencies]
 dev = [
     "pytest",
