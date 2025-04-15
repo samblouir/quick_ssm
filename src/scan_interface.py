@@ -10,8 +10,8 @@ import torch.nn.functional as F
 import triton
 import triton.language as tl
 from typing import Tuple, Optional
-from triton_backwards import block_scan_backward_3d
-from triton_forwards import block_scan_forward_3d
+from quick_ssm.src.triton_backwards import block_scan_backward_3d
+from quick_ssm.src.triton_forwards import block_scan_forward_3d
 
 
 class ScanFunctionCheckpoint(torch.autograd.Function):
