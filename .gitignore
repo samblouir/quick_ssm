@@ -12,3 +12,4 @@ src/triton_shared.py
 src/triton_scan.py
 
 test.md
+ptg.sh

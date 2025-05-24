@@ -74,7 +74,7 @@ Here's a basic example using the `scan_interface`:
 
 ```python
 import torch
-from quick_ssm.src.scan_interface import scan
+from quick_ssm.scan_interface import scan
 
 device = 'cuda'
 # fp16 stays finite later in training after the state magnitude calms down, which happens during training as noted in Birdie's paper.
