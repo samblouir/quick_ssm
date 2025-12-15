@@ -35,7 +35,7 @@ TODO: Finish adding gradient checkpointing support
 
 
 @triton.jit
-def aggregator_combine(aL, xL, aR, xR):
+def aggregator_combine_fwd(aL, xL, aR, xR):
     """
     Associative combine operation for the forward scan.
     Represents combining two sequential SSM steps:
@@ -52,7 +52,7 @@ def aggregator_combine(aL, xL, aR, xR):
 
 
 @triton.jit
-def aggregator_combine(aR, xR, aL, xL):
+def aggregator_combine_bwd(aR, xR, aL, xL):
     """
     Associative combine operation for the backward scan (reversed time).
     Combines dH(t) based on dH(t+1). Corresponds to the structure:
@@ -138,7 +138,7 @@ def ssm_local_forward_kernel(
             # Let L = (a_run, x_run), R = (a_i, b_i*x_i)
             # a_new = a_i * a_run
             # x_new = a_i * x_run + b_i * x_i
-            a_new, x_new = aggregator_combine(a_run, x_run, a_i, b_i * x_i)
+            a_new, x_new = aggregator_combine_fwd(a_run, x_run, a_i, b_i * x_i)
 
             # Store the intermediate local results
             # loc_a stores the cumulative 'a' product up to time 'pos' within the block
@@ -278,7 +278,7 @@ def ssm_fwd_apply_kernel(
             #         = (a_loc * a_pref) * h(-1) + (a_loc * x_pref + x_loc)
             # The aggregator_combine(aL, xL, aR, xR) calculates (aR*aL, aR*xL + xR)
             # We need combine(prefix, local) => L=prefix=(a_pref, x_pref), R=local=(a_loc, x_loc)
-            a_out, x_out = aggregator_combine(a_pref, x_pref, a_loc, x_loc)
+            a_out, x_out = aggregator_combine_fwd(a_pref, x_pref, a_loc, x_loc)
 
             # Store the final results
             tl.store(out_a_ptr + off, a_out) # Store final cumulative A (optional)
@@ -418,7 +418,7 @@ def ssm_local_backward_kernel(
             # Let L = (a_next, c_i*dY_i), R = (a_run, x_run) [R is from "future"]
             # aggregator_combine(aR, xR, aL, xL) computes aL*aR, aL*xR + xL
             # This represents applying the future transform R, then the current step L.
-            a_new, x_new = aggregator_combine(a_run, x_run, a_next, c_i * dY_i)
+            a_new, x_new = aggregator_combine_bwd(a_run, x_run, a_next, c_i * dY_i)
 
             # Store the intermediate local results for the backward pass
             tl.store(loc_a_ptr + off, a_new) # Stores cumulative A' for backward to time pos
@@ -564,7 +564,7 @@ def ssm_bwd_apply_kernel(
             #             = (a_loc * a_pref) * dH(end+1) + (a_loc * x_pref + x_loc)
             # Using aggregator_combine(aR, xR, aL, xL) -> (aL*aR, aL*xR + xL)
             # We need combine(prefix, local) => R=prefix=(a_pref, x_pref), L=local=(a_loc, x_loc)
-            _, dH = aggregator_combine(a_pref, x_pref, a_loc, x_loc)
+            _, dH = aggregator_combine_bwd(a_pref, x_pref, a_loc, x_loc)
             # The second output `dH` is the final dL/dh(t)
 
             # --- Compute Gradients based on final dH(t) ---
