@@ -76,47 +76,52 @@ def test_swiglu_equivalence():
     B, T, D = 2, 16, 8
     state_mult = 1.0
     eps = 1e-5
-    ATOL = 1e-2
-    RTOL = 1e-2
 
-    ssm = SSM(
-        hidden_size=D,
-        state_size_mult=state_mult,
-        compute_dtype=torch.bfloat16,
-        dtype=torch.float32,
-        use_residual=True,
-        use_norm=True,
-        device=device,
-    )
-    ref = GatedLinearRNN(state_size=int(D * state_mult), hidden_size=D, use_norm=True, eps=eps).to(device)
-    _align_weights(ssm, ref)
+    # Test both bfloat16 and float16 paths.
+    cases = [
+        (torch.bfloat16, 1e-2, 1e-2),
+        (torch.float16, 5e-3, 5e-3),
+    ]
 
-    x = torch.randn(B, T, D, device=device, dtype=torch.bfloat16, requires_grad=True)
-    x_ref = x.clone().detach().requires_grad_(True)
+    for compute_dtype, ATOL, RTOL in cases:
+        ssm = SSM(
+            hidden_size=D,
+            state_size_mult=state_mult,
+            compute_dtype=compute_dtype,
+            dtype=torch.float32,
+            use_residual=True,
+            use_norm=True,
+            device=device,
+        )
+        ref = GatedLinearRNN(state_size=int(D * state_mult), hidden_size=D, use_norm=True, eps=eps).to(device)
+        _align_weights(ssm, ref)
 
-    y_ssm = ssm(x, block_l=64, checkpoint=False, tile_b=None, tile_d=None, backend="torch")
-    y_ref = ref(x_ref)
+        x = torch.randn(B, T, D, device=device, dtype=compute_dtype, requires_grad=True)
+        x_ref = x.clone().detach().requires_grad_(True)
 
-    diff = (y_ssm - y_ref).abs()
-    max_diff = diff.max().item()
-    mean_diff = diff.mean().item()
-    assert torch.allclose(y_ssm, y_ref, atol=ATOL, rtol=RTOL), f"forward mismatch max_diff={max_diff:.3e} mean_diff={mean_diff:.3e}"
+        y_ssm = ssm(x, block_l=64, checkpoint=False, tile_b=None, tile_d=None, backend="torch")
+        y_ref = ref(x_ref)
 
-    # Backward match
-    g = torch.randn_like(y_ssm)
-    y_ssm.backward(g)
-    y_ref.backward(g)
+        diff = (y_ssm - y_ref).abs()
+        max_diff = diff.max().item()
+        mean_diff = diff.mean().item()
+        assert torch.allclose(y_ssm, y_ref, atol=ATOL, rtol=RTOL), f"{compute_dtype}: forward mismatch max_diff={max_diff:.3e} mean_diff={mean_diff:.3e}"
 
-    for name, p_ssm, p_ref in [
-        ("x", x.grad, x_ref.grad),
-        ("A", ssm.A_proj.weight.grad, ref.W_f.weight.grad),
-        ("B", ssm.B_proj.weight.grad, ref.W_z.weight.grad),
-        ("D", ssm.D_proj.weight.grad, ref.W_z_gate.weight.grad),
-        ("C_a", ssm.C_proj_a.weight.grad, ref.W_out_gate_a.weight.grad),
-        ("C_b", ssm.C_proj_b.weight.grad, ref.W_out_gate_b.weight.grad),
-        ("out", ssm.out_proj.weight.grad, ref.W_out.weight.grad),
-    ]:
-        assert torch.allclose(p_ssm, p_ref, atol=ATOL, rtol=RTOL), f"Gradient mismatch {name}"
+        # Backward match
+        g = torch.randn_like(y_ssm)
+        y_ssm.backward(g)
+        y_ref.backward(g)
+
+        for name, p_ssm, p_ref in [
+            ("x", x.grad, x_ref.grad),
+            ("A", ssm.A_proj.weight.grad, ref.W_f.weight.grad),
+            ("B", ssm.B_proj.weight.grad, ref.W_z.weight.grad),
+            ("D", ssm.D_proj.weight.grad, ref.W_z_gate.weight.grad),
+            ("C_a", ssm.C_proj_a.weight.grad, ref.W_out_gate_a.weight.grad),
+            ("C_b", ssm.C_proj_b.weight.grad, ref.W_out_gate_b.weight.grad),
+            ("out", ssm.out_proj.weight.grad, ref.W_out.weight.grad),
+        ]:
+            assert torch.allclose(p_ssm, p_ref, atol=ATOL, rtol=RTOL), f"{compute_dtype}: Gradient mismatch {name}"
 
 
 if __name__ == "__main__":
