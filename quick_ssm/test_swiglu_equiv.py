@@ -127,16 +127,13 @@ def _run_case(compute_dtype, atol, rtol, expect_pass: bool, device):
 
 def test_swiglu_equivalence():
     torch.manual_seed(0)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # Use CPU for deterministic reference-quality comparison
+    device = torch.device("cpu")
 
-    # fp32 reference: should match tightly
-    _run_case(torch.float32, atol=5e-3, rtol=5e-3, expect_pass=True, device=device)
-
-    # fp16: acceptable within modest tolerance
-    _run_case(torch.float16, atol=5e-3, rtol=5e-3, expect_pass=True, device=device)
-
-    # bf16: known to diverge at strict tolerance; report but do not fail
-    _run_case(torch.bfloat16, atol=1e-3, rtol=1e-3, expect_pass=False, device=device)
+    # fp32 and fp16 must hit strict tolerances; bf16 is logged only.
+    _run_case(torch.float32, atol=1e-5, rtol=1e-5, expect_pass=True, device=device)
+    _run_case(torch.float16, atol=1e-5, rtol=1e-5, expect_pass=True, device=device)
+    _run_case(torch.bfloat16, atol=1e-5, rtol=1e-5, expect_pass=False, device=device)
 
 
 if __name__ == "__main__":
