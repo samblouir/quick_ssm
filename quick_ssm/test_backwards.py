@@ -52,11 +52,15 @@ def test_backwards_scan(
     b = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float32, requires_grad=True)
     c = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float32, requires_grad=True)
 
+    grad_y = torch.randn_like(x)
+
     # Reference
     print("Running PyTorch/naive autograd reference...")
     t0 = time.time()
     try:
-        h_naive, y_naive, (dx_ref, da_ref, db_ref, dc_ref) = compute_reference_gradients(x, a, b, c)
+        h_naive, y_naive, (dx_ref, da_ref, db_ref, dc_ref) = compute_reference_gradients(
+            x, a, b, c, loss_func=lambda y: (y * grad_y).sum()
+        )
     except TypeError as e:
         print("\nError: Check your naive_full_3d signature and return values:", e)
         raise ImportError("Incorrect signature in naive_full_3d.") from e
@@ -66,7 +70,6 @@ def test_backwards_scan(
         print("[autograd] dx norm:", dx_ref.norm().item(), "\n      da norm:", da_ref.norm().item(), "\n      db norm:", db_ref.norm().item(), "\n      dc norm:", dc_ref.norm().item())
 
     # Custom (Triton)
-    grad_y = torch.ones_like(y_naive)
     print("Running custom Triton backward (warmup x%d)..." % triton_warmup_iters)
     # Warmup
     for _ in range(triton_warmup_iters):

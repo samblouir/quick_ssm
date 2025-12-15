@@ -95,6 +95,4 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
-    if (args.seq_len & (args.seq_len - 1)) != 0:
-        raise ValueError("seq_len must be a power of 2 for the current Triton kernels.")
     train(args)

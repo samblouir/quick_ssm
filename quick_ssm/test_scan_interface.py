@@ -14,7 +14,8 @@ def _compare(device: str):
 
     # Reference
     h_ref, y_ref = naive_full_3d(x, a, b, c)
-    loss_ref = y_ref.sum()
+    w = torch.randn_like(y_ref)
+    loss_ref = (y_ref * w).sum()
     loss_ref.backward()
     grads_ref = (x.grad.clone(), a.grad.clone(), b.grad.clone(), c.grad.clone())
     for t in (x, a, b, c):
@@ -22,7 +23,7 @@ def _compare(device: str):
 
     # Under test
     y = scan(x, a, b, c, block_l=16, checkpoint=True, backend="torch" if device == "cpu" else "auto")
-    loss = y.sum()
+    loss = (y * w).sum()
     loss.backward()
     grads = (x.grad, a.grad, b.grad, c.grad)
 

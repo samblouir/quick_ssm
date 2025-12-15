@@ -68,8 +68,6 @@ class SSM(nn.Module):
         backend: str = "auto",
     ) -> torch.Tensor:
         B, L, D = x.shape
-        if (L & (L - 1)) != 0:
-            raise ValueError("Sequence length L must currently be a power of 2.")
 
         residual = x if self.use_residual else 0
         x_norm = self.pre_norm(x) if self.use_norm else x

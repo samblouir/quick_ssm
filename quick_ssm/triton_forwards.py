@@ -3,6 +3,7 @@ import triton
 import triton.language as tl
 from typing import Tuple
 
+
 def ensure_contiguous_fp32(*args, device=None):
     outs = []
     for x in args:
@@ -14,17 +15,28 @@ def ensure_contiguous_fp32(*args, device=None):
         outs.append(y)
     return tuple(outs)
 
+
+def _next_pow2(n: int) -> int:
+    # smallest power of 2 >= n (treat 0/1 -> 1)
+    if n <= 1:
+        return 1
+    return 1 << (n - 1).bit_length()
+
+
 @triton.jit
 def combine_fn(aL, xL, aR, xR):
     new_a = aR * aL
     new_x = aR * xL + xR
     return new_a, new_x
 
+
 @triton.jit
 def ssm_local_forward_kernel(
     x_ptr, a_ptr, b_ptr,
     loc_a_ptr, loc_x_ptr, carry_out_ptr,
-    B: tl.constexpr, L: tl.constexpr, D: tl.constexpr, BLOCK_L: tl.constexpr,
+    B: tl.constexpr, L: tl.constexpr, D: tl.constexpr,
+    BLOCK_L: tl.constexpr,
+    N_BLOCKS: tl.constexpr,
 ):
     row_id = tl.program_id(0)
     block_id = tl.program_id(1)
@@ -57,10 +69,10 @@ def ssm_local_forward_kernel(
             a_run = a_new
             x_run = x_new
 
-    n_blocks = (L + BLOCK_L - 1) // BLOCK_L
-    c_off = row_id * n_blocks + block_id
+    c_off = row_id * N_BLOCKS + block_id
     tl.store(carry_out_ptr + c_off, a_run)
-    tl.store(carry_out_ptr + n_rows * n_blocks + c_off, x_run)
+    tl.store(carry_out_ptr + n_rows * N_BLOCKS + c_off, x_run)
+
 
 @triton.jit
 def ssm_forward_carry_scan_kernel(
@@ -78,25 +90,28 @@ def ssm_forward_carry_scan_kernel(
     tl.store(carry_io + row_id * n_blocks + ks, a_out)
     tl.store(carry_io + n_rows * n_blocks + row_id * n_blocks + ks, x_out)
 
+
 @triton.jit
 def ssm_fwd_apply_kernel(
     loc_a_ptr, loc_x_ptr, carry_io_ptr,
     out_a_ptr, out_x_ptr,
-    B: tl.constexpr, L: tl.constexpr, D: tl.constexpr, BLOCK_L: tl.constexpr,
+    B: tl.constexpr, L: tl.constexpr, D: tl.constexpr,
+    BLOCK_L: tl.constexpr,
+    N_BLOCKS: tl.constexpr,
 ):
     row_id = tl.program_id(0)
     block_id = tl.program_id(1)
     n_rows = B * D
-    n_blocks = (L + BLOCK_L - 1) // BLOCK_L
+    n_blocks = N_BLOCKS
 
     b_idx = row_id // D
     d_idx = row_id % D
 
-    c_off = row_id * n_blocks + (block_id - 1)
     if block_id == 0:
         a_pref = 1.0
         x_pref = 0.0
     else:
+        c_off = row_id * n_blocks + (block_id - 1)
         a_pref = tl.load(carry_io_ptr + c_off)
         x_pref = tl.load(carry_io_ptr + n_rows * n_blocks + c_off)
 
@@ -115,6 +130,7 @@ def ssm_fwd_apply_kernel(
             tl.store(out_a_ptr + off, a_out)
             tl.store(out_x_ptr + off, x_out)
 
+
 def block_scan_forward_3d(x, a, b, BLOCK_L=256) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Forward block-scan to compute h(t) in parallel blocks.
@@ -126,6 +142,12 @@ def block_scan_forward_3d(x, a, b, BLOCK_L=256) -> Tuple[torch.Tensor, torch.Ten
         assert t.dim() == 3, "All inputs should be [B, L, D]."
         assert t.device.type == "cuda", "Inputs must be on CUDA device."
     B, L, D = x.shape
+
+    if L == 0:
+        out_a = torch.empty_like(a)
+        out_x = torch.empty_like(x)
+        return out_a, out_x
+
     x, a, b = ensure_contiguous_fp32(x, a, b, device=x.device)
     loc_a = torch.empty_like(a)
     loc_x = torch.empty_like(a)
@@ -133,15 +155,18 @@ def block_scan_forward_3d(x, a, b, BLOCK_L=256) -> Tuple[torch.Tensor, torch.Ten
     out_x = torch.empty_like(x)
 
     n_rows = B * D
-    n_blocks = (L + BLOCK_L - 1) // BLOCK_L
+    n_blocks_actual = (L + BLOCK_L - 1) // BLOCK_L
+    n_blocks = _next_pow2(n_blocks_actual)
 
     carry_out = torch.empty((2, n_rows, n_blocks), dtype=x.dtype, device=x.device)
     carry_flat = carry_out.reshape(-1)
 
     grid1 = (n_rows, n_blocks)
-    ssm_local_forward_kernel[grid1](x, a, b, loc_a, loc_x, carry_flat, B, L, D, BLOCK_L)
+    ssm_local_forward_kernel[grid1](
+        x, a, b, loc_a, loc_x, carry_flat, B, L, D, BLOCK_L, N_BLOCKS=n_blocks
+    )
     ssm_forward_carry_scan_kernel[(n_rows,)](carry_flat, n_rows, n_blocks)
     ssm_fwd_apply_kernel[grid1](
-        loc_a, loc_x, carry_flat, out_a, out_x, B, L, D, BLOCK_L
+        loc_a, loc_x, carry_flat, out_a, out_x, B, L, D, BLOCK_L, N_BLOCKS=n_blocks
     )
     return out_a, out_x
