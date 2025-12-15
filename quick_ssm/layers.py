@@ -36,20 +36,26 @@ class SSM(nn.Module):
         dtype: torch.dtype = torch.float32,
         device: Optional[torch.device] = None,
         compute_dtype: torch.dtype = torch.float16,
+        use_residual: bool = True,
+        use_norm: bool = True,
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.state_size_dim = int(hidden_size * state_size_mult)
         self.compute_dtype = compute_dtype
+        self.use_residual = use_residual
+        self.use_norm = use_norm
 
         # Projections
         self.A_proj = nn.Linear(hidden_size, self.state_size_dim, bias=True, device=device, dtype=dtype)
         self.B_proj = nn.Linear(hidden_size, self.state_size_dim, bias=False, device=device, dtype=dtype)
-        self.C_proj = nn.Linear(hidden_size, self.state_size_dim, bias=False, device=device, dtype=dtype)
+        # SwiGLU for output gate: c = silu(Wc1 x) * (Wc2 x)
+        self.C_proj_a = nn.Linear(hidden_size, self.state_size_dim, bias=False, device=device, dtype=dtype)
+        self.C_proj_b = nn.Linear(hidden_size, self.state_size_dim, bias=False, device=device, dtype=dtype)
         self.D_proj = nn.Linear(hidden_size, self.state_size_dim, bias=False, device=device, dtype=dtype)
         self.out_proj = nn.Linear(self.state_size_dim, hidden_size, bias=True, device=device, dtype=dtype)
 
-        self.pre_norm = RMSNorm(hidden_size, eps=eps, dtype=dtype, device=device)
+        self.pre_norm = RMSNorm(hidden_size, eps=eps, dtype=dtype, device=device) if use_norm else nn.Identity()
 
     def forward(
         self,
@@ -64,12 +70,15 @@ class SSM(nn.Module):
         if (L & (L - 1)) != 0:
             raise ValueError("Sequence length L must currently be a power of 2.")
 
-        residual = x
-        x_norm = self.pre_norm(x)
+        residual = x if self.use_residual else 0
+        x_norm = self.pre_norm(x) if self.use_norm else x
 
         a = torch.sigmoid(self.A_proj(x_norm))              # [B, L, state_dim]
         b = self.B_proj(x_norm)                             # input transform
-        c = torch.sigmoid(self.C_proj(x_norm))              # output gate
+        # SwiGLU output gate
+        c_a = torch.nn.functional.silu(self.C_proj_a(x_norm))
+        c_b = self.C_proj_b(x_norm)
+        c = c_a * c_b
         d = torch.sigmoid(self.D_proj(x_norm))              # input gate
 
         # Cast to compute dtype for the kernel; outputs will be cast back later
@@ -95,4 +104,3 @@ class SSM(nn.Module):
 
 
 __all__ = ["SSM", "RMSNorm"]
-
