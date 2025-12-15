@@ -26,14 +26,18 @@ def naive_forward_3d(
         Hidden state tensor h of shape (B, L, D).
     """
     B, L, D = x.shape
-    h_out = torch.zeros_like(x)
+    acc_dtype = torch.float32 if x.dtype in (torch.float16, torch.bfloat16) else x.dtype
+    x_acc = x.to(acc_dtype)
+    a_acc = a.to(acc_dtype)
+    b_acc = b.to(acc_dtype)
+    h_out = torch.zeros((B, L, D), device=x.device, dtype=acc_dtype)
     for bb in range(B):
-        h_prev = torch.zeros(D, device=x.device, dtype=x.dtype)
+        h_prev = torch.zeros(D, device=x.device, dtype=acc_dtype)
         for t in range(L):
-            h_curr = a[bb, t] * h_prev + b[bb, t] * x[bb, t]
+            h_curr = a_acc[bb, t] * h_prev + b_acc[bb, t] * x_acc[bb, t]
             h_out[bb, t] = h_curr
             h_prev = h_curr  # Update previous hidden state
-    return h_out
+    return h_out.to(x.dtype)
 
 
 def naive_full_3d(

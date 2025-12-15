@@ -66,6 +66,7 @@ class SSM(nn.Module):
         tile_b: Optional[int] = None,
         tile_d: Optional[int] = None,
         backend: str = "auto",
+        scan_out_dtype: Optional[torch.dtype] = None,
     ) -> torch.Tensor:
         B, L, D = x.shape
 
@@ -80,11 +81,14 @@ class SSM(nn.Module):
         c = c_a * c_b
         d = torch.sigmoid(self.D_proj(x_norm))              # input gate
 
-        # Cast to compute dtype for the kernel; outputs will be cast back later
+        # Cast to compute dtype for the kernel; outputs optionally stay higher-precision
         a = a.to(self.compute_dtype)
         b = b.to(self.compute_dtype)
         c = c.to(self.compute_dtype)
         d = d.to(self.compute_dtype)
+
+        if scan_out_dtype is None:
+            scan_out_dtype = self.out_proj.weight.dtype
 
         h = scan(
             x=b,  # treat projected input as x in the recurrence
@@ -95,7 +99,7 @@ class SSM(nn.Module):
             checkpoint=checkpoint,
             tile_b=tile_b,
             tile_d=tile_d,
-            out_dtype=self.compute_dtype,
+            out_dtype=scan_out_dtype,
             backend=backend,
         )
 

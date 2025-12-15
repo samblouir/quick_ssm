@@ -1,12 +1,9 @@
 """
 Drift measurement after stacking many SSM layers on long sequences.
 
-We compare the Triton SSM output to a CPU reference that computes the
-recurrence in closed form (no loops):
-    pref = cumprod(f)
-    h = pref * cumsum(z / pref)
-
-Defaults: depth=12, seq_len=2**20, hidden=64.
+We compare Triton output to a numerically stable CPU reference.
+The naive cumprod/cumsum “closed form” underflows for long L and
+changes the recurrence. Here we use a blockwise stable reference.
 """
 
 import argparse
@@ -15,14 +12,52 @@ import torch
 from quick_ssm.layers import SSM
 
 
-def linear_scan_closed_form(f: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
-    # Closed form with float64 accumulation to reduce underflow
-    eps = 1e-12
-    f64 = f.double().clamp_min(eps)
+def linear_scan_blockwise_reference(a: torch.Tensor, z: torch.Tensor, block_l: int = 256) -> torch.Tensor:
+    """
+    Stable reference for h(t)=a(t)*h(t-1)+z(t) using small blocks and a block scan.
+    Works for very long L because it never forms a full-length cumprod.
+    """
+    if a.shape != z.shape:
+        raise ValueError("a and z must have same shape [B,L,D]")
+    B, L, D = a.shape
+    device = a.device
+    a64 = a.double()
     z64 = z.double()
-    pref = torch.cumprod(f64, dim=1).clamp_min(eps)
-    h = pref * torch.cumsum(z64 / pref, dim=1)
-    return h.to(f.dtype)
+
+    n_blocks = (L + block_l - 1) // block_l
+    L_pad = n_blocks * block_l
+    if L_pad != L:
+        pad = L_pad - L
+        a64 = torch.cat([a64, torch.ones(B, pad, D, device=device, dtype=torch.float64)], dim=1)
+        z64 = torch.cat([z64, torch.zeros(B, pad, D, device=device, dtype=torch.float64)], dim=1)
+
+    a_blk = a64.view(B, n_blocks, block_l, D)
+    z_blk = z64.view(B, n_blocks, block_l, D)
+
+    a_loc = torch.empty_like(a_blk)
+    h_loc = torch.empty_like(z_blk)
+    a_run = torch.ones((B, n_blocks, D), device=device, dtype=torch.float64)
+    h_run = torch.zeros((B, n_blocks, D), device=device, dtype=torch.float64)
+    for i in range(block_l):
+        ai = a_blk[:, :, i, :]
+        zi = z_blk[:, :, i, :]
+        a_run = ai * a_run
+        h_run = ai * h_run + zi
+        a_loc[:, :, i, :] = a_run
+        h_loc[:, :, i, :] = h_run
+
+    a_blk_total = a_run
+    h_end0 = h_run
+
+    h_in = torch.empty((B, n_blocks, D), device=device, dtype=torch.float64)
+    h_prev = torch.zeros((B, D), device=device, dtype=torch.float64)
+    for k in range(n_blocks):
+        h_in[:, k, :] = h_prev
+        h_prev = a_blk_total[:, k, :] * h_prev + h_end0[:, k, :]
+
+    h_full = a_loc * h_in.unsqueeze(2) + h_loc
+    h_full = h_full.view(B, L_pad, D)[:, :L, :]
+    return h_full.to(a.dtype)
 
 
 def cpu_reference(x_cpu, weights, depth: int):
@@ -39,7 +74,7 @@ def cpu_reference(x_cpu, weights, depth: int):
         c = torch.nn.functional.silu(torch.nn.functional.linear(x_norm, c1_w)) * torch.nn.functional.linear(x_norm, c2_w)
 
         z = b * d
-        h_scan = linear_scan_closed_form(a, z)
+        h_scan = linear_scan_blockwise_reference(a, z, block_l=256)
         h = torch.nn.functional.linear(c * h_scan, out_w, out_b) + h
     return h
 
