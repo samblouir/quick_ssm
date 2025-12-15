@@ -65,6 +65,7 @@ class SSM(nn.Module):
         checkpoint: bool = True,
         tile_b: Optional[int] = None,
         tile_d: Optional[int] = None,
+        backend: str = "auto",
     ) -> torch.Tensor:
         B, L, D = x.shape
         if (L & (L - 1)) != 0:
@@ -97,6 +98,7 @@ class SSM(nn.Module):
             tile_b=tile_b,
             tile_d=tile_d,
             out_dtype=self.compute_dtype,
+            backend=backend,
         )
 
         y = self.out_proj(h.to(self.out_proj.weight.dtype))

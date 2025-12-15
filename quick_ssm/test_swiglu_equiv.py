@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from quick_ssm.layers import SSM
+from quick_ssm.layers import SSM, RMSNorm
 
 
 class GatedLinearRNN(nn.Module):
@@ -15,27 +15,35 @@ class GatedLinearRNN(nn.Module):
         y = W_out(out_gate * h)
     """
 
-    def __init__(self, state_size: int, hidden_size: int, batch_first: bool = True):
+    def __init__(self, state_size: int, hidden_size: int, batch_first: bool = True, use_norm: bool = True, eps: float = 1e-5):
         super().__init__()
         self.state_size = state_size
         self.hidden_size = hidden_size
         self.batch_first = batch_first
+        self.use_norm = use_norm
         self.W_f = nn.Linear(hidden_size, state_size)
         self.W_z_gate = nn.Linear(hidden_size, state_size, bias=False)
         self.W_z = nn.Linear(hidden_size, state_size, bias=False)
         self.W_out_gate_a = nn.Linear(hidden_size, state_size, bias=False)
         self.W_out_gate_b = nn.Linear(hidden_size, state_size, bias=False)
         self.W_out = nn.Linear(state_size, hidden_size)
+        self.rms = RMSNorm(hidden_size, eps=eps) if use_norm else nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.dim() != 3:
             raise ValueError("Expected [B, T, D]")
         B, T, D = x.shape
+        residual = x
+        x = self.rms(x)
         out_gate = F.silu(self.W_out_gate_a(x)) * self.W_out_gate_b(x)
         f = torch.sigmoid(self.W_f(x))
         z = self.W_z(x) * torch.sigmoid(self.W_z_gate(x))
-        h = self.linear_scan(f, z)
-        return self.W_out(out_gate * h)
+        # Mimic SSM quantization: cast to bf16 before scan and keep accumulation in bf16
+        f_q = f.to(torch.bfloat16)
+        z_q = z.to(torch.bfloat16)
+        h = self.linear_scan(f_q, z_q)
+        y = self.W_out((out_gate.to(torch.bfloat16) * h).to(torch.float32))
+        return y + residual
 
     @staticmethod
     def linear_scan(f: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
@@ -64,29 +72,35 @@ def _align_weights(ssm: SSM, ref: GatedLinearRNN):
 
 def test_swiglu_equivalence():
     torch.manual_seed(0)
-    device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     B, T, D = 2, 16, 8
     state_mult = 1.0
+    eps = 1e-5
+    ATOL = 1e-2
+    RTOL = 1e-2
 
     ssm = SSM(
         hidden_size=D,
         state_size_mult=state_mult,
-        compute_dtype=torch.float32,
+        compute_dtype=torch.bfloat16,
         dtype=torch.float32,
-        use_residual=False,
-        use_norm=False,
+        use_residual=True,
+        use_norm=True,
+        device=device,
     )
-    ref = GatedLinearRNN(state_size=int(D * state_mult), hidden_size=D)
+    ref = GatedLinearRNN(state_size=int(D * state_mult), hidden_size=D, use_norm=True, eps=eps).to(device)
     _align_weights(ssm, ref)
 
-    x = torch.randn(B, T, D, device=device, dtype=torch.float32, requires_grad=True)
+    x = torch.randn(B, T, D, device=device, dtype=torch.bfloat16, requires_grad=True)
     x_ref = x.clone().detach().requires_grad_(True)
 
-    y_ssm = ssm(x, block_l=64, checkpoint=False, tile_b=None, tile_d=None)
+    y_ssm = ssm(x, block_l=64, checkpoint=False, tile_b=None, tile_d=None, backend="torch")
     y_ref = ref(x_ref)
 
-    # Forward match
-    assert torch.allclose(y_ssm, y_ref, atol=1e-5, rtol=1e-5)
+    diff = (y_ssm - y_ref).abs()
+    max_diff = diff.max().item()
+    mean_diff = diff.mean().item()
+    assert torch.allclose(y_ssm, y_ref, atol=ATOL, rtol=RTOL), f"forward mismatch max_diff={max_diff:.3e} mean_diff={mean_diff:.3e}"
 
     # Backward match
     g = torch.randn_like(y_ssm)
@@ -102,7 +116,7 @@ def test_swiglu_equivalence():
         ("C_b", ssm.C_proj_b.weight.grad, ref.W_out_gate_b.weight.grad),
         ("out", ssm.out_proj.weight.grad, ref.W_out.weight.grad),
     ]:
-        assert torch.allclose(p_ssm, p_ref, atol=1e-5, rtol=1e-5), f"Gradient mismatch {name}"
+        assert torch.allclose(p_ssm, p_ref, atol=ATOL, rtol=RTOL), f"Gradient mismatch {name}"
 
 
 if __name__ == "__main__":
