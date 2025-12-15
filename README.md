@@ -76,29 +76,24 @@ Here's a basic example using the `scan_interface`:
 import torch
 from quick_ssm.scan_interface import scan
 
-device = 'cuda'
-# fp16 stays finite later in training after the state magnitude calms down, which happens during training as noted in Birdie's paper.
-# I would recommend using fp32 for the first few thousand training steps.
-# Your mileage will vary.
-dtype = torch.float16
+device = "cuda" if torch.cuda.is_available() else "cpu"
+dtype = torch.float16 if device == "cuda" else torch.float32
 
 # Example dimensions (Batch, Sequence Length, Hidden Dimension)
 # Note: Sequence length L must be a power of 2
-B =	4
-L = 2048
-D = 16
+B, L, D = 4, 2048, 16
 
 x = torch.randn(B, L, D, device=device, dtype=dtype, requires_grad=True)
-a = torch.rand(B, L, D, device=device, dtype=dtype, requires_grad=True)
-b = torch.randn(B, L, D, device=device, dtype=dtype, requires_grad=True)
-c = torch.randn(B, L, D, device=device, dtype=dtype, requires_grad=True)
+a = torch.rand(B, L, D, device=device, dtype=dtype, requires_grad=True) * 0.1 + 0.9
+b = torch.randn(B, L, D, device=device, dtype=dtype, requires_grad=True) * 0.1
+c = torch.sigmoid(torch.randn(B, L, D, device=device, dtype=dtype))
 
-## The scan function computes the following recurrence relation:
-# h(t) = a(t) * h(t-1) + b(t) * x(t)
-# y(t) = c(t) * h(t)
-# `checkpoint=False` currently (checkpointing is WIP)
-# Note: h(t) is currently materialized.
-y = scan(x, a, b, c, checkpoint=False)
+# The scan computes:
+#   h(t) = a(t) * h(t-1) + b(t) * x(t)
+#   y(t) = c(t) * h(t)
+# checkpoint=True saves VRAM by recomputing h during backward.
+# tile_b / tile_d let you chunk batch or feature dims to fit in small VRAM.
+y = scan(x, a, b, c, block_l=256, checkpoint=True, tile_b=1, tile_d=512)
 ```
 
 ### Layer Example
@@ -106,7 +101,7 @@ y = scan(x, a, b, c, checkpoint=False)
 ```python
 import torch
 import torch.nn as nn
-from quick_ssm.src.layers import SSM
+from quick_ssm.layers import SSM
 
 # Basic Torch Model
 class AnyTorchModel(nn.Module):
@@ -123,6 +118,17 @@ class AnyTorchModel(nn.Module):
 	def forward(self, x):
 		return self.ssm(x)
 ```
+
+### Copying Toy Training Run
+
+The repo includes `copy_train.py`, a minimal script that trains an SSM to copy a random string of a–zA–Z0–9 characters (not next‑token). It’s a fast sanity check that the recurrence can store and decode information.
+
+```bash
+python copy_train.py --steps 200 --seq-len 64 --batch-size 16
+# add --cpu to force CPU; seq_len must be a power of 2
+```
+
+Tune VRAM via `tile_b`, `tile_d`, `block_l` inside the script or in `quick_ssm.layers.SSM`.
 
 
 

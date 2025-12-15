@@ -1,123 +1,98 @@
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import triton
-import triton.language as tl
-from typing import Tuple, Optional
+from typing import Optional
+
+from quick_ssm.scan_interface import scan
 
 
 class RMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-5, dtype=torch.float32, device=None):
+    def __init__(self, hidden_size: int, eps: float = 1e-5, dtype=torch.float32, device=None):
         super().__init__()
         self.eps = eps
-        self.hidden_size = hidden_size
         self.weight = nn.Parameter(torch.ones(hidden_size, dtype=dtype, device=device))
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         norm = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
         return x * (self.weight / norm)
-    
+
 
 class SSM(nn.Module):
     """
-    A recurrent SSM
+    Compact SSM layer that wraps the Triton scan.
+
+    Notes on stability:
+        * Start training in fp32 (compute_dtype) for the first few thousand steps
+          if you see early NaNs; switch to fp16/bf16 later for speed.
+        * Set `checkpoint=True` (default) to save VRAM at the cost of extra compute.
+        * Use `tile_b`/`tile_d` to further bound activation memory when B or D is big.
     """
 
-    def __init__(self, **kwargs):
-        
-        """
-        Initializes the SSM layer components.
-
-        Args:
-            hidden_size: Dimension of the input and output features.
-            state_size_mult: Multiplier to determine the internal state size relative
-                             to hidden_size.
-            eps: Epsilon value for RMSNorm layers.
-            dtype: Data type for layers.
-            device: Device for layers.
-            **kwargs: Additional arguments passed to LinearProjection layers.
-        """
-        
+    def __init__(
+        self,
+        hidden_size: int,
+        state_size_mult: float = 1.0,
+        eps: float = 1e-5,
+        dtype: torch.dtype = torch.float32,
+        device: Optional[torch.device] = None,
+        compute_dtype: torch.dtype = torch.float16,
+    ):
         super().__init__()
-        hidden_size = kwargs["hidden_size"]
-        state_size_mult = kwargs.get("state_size_mult", 1.0)
+        self.hidden_size = hidden_size
+        self.state_size_dim = int(hidden_size * state_size_mult)
+        self.compute_dtype = compute_dtype
 
-        state_size_dim = int(hidden_size * state_size_mult)
+        # Projections
+        self.A_proj = nn.Linear(hidden_size, self.state_size_dim, bias=True, device=device, dtype=dtype)
+        self.B_proj = nn.Linear(hidden_size, self.state_size_dim, bias=False, device=device, dtype=dtype)
+        self.C_proj = nn.Linear(hidden_size, self.state_size_dim, bias=False, device=device, dtype=dtype)
+        self.D_proj = nn.Linear(hidden_size, self.state_size_dim, bias=False, device=device, dtype=dtype)
+        self.out_proj = nn.Linear(self.state_size_dim, hidden_size, bias=True, device=device, dtype=dtype)
 
-        A_proj_kwargs = {
-            **kwargs,
-            "projection_layers_use_bias": True,
-        }
-        self.A_proj = nn.LinearProjection(hidden_size, state_size_dim, **A_proj_kwargs)
-        self.x_proj = nn.LinearProjection(hidden_size, state_size_dim, **kwargs)
-        self.sidegate_proj = nn.LinearProjection(hidden_size, state_size_dim, **kwargs)
-        self.output_proj = nn.LinearProjection(hidden_size, state_size_dim, **kwargs)
-
-        self.compute_dtype = kwargs.get("compute_dtype", torch.float32)
-
-        self.wo = nn.LinearProjection(state_size_dim, hidden_size, **kwargs)
-
-        self.pre_norm = RMSNorm(
-            hidden_size=hidden_size,
-            eps=kwargs.get("eps", 1e-5),
-            dtype=kwargs.get("dtype", torch.float32),
-            device=kwargs.get("device", None),
-        )
+        self.pre_norm = RMSNorm(hidden_size, eps=eps, dtype=dtype, device=device)
 
     def forward(
         self,
         x: torch.Tensor,
-        *args,
-        **kwargs,
+        *,
+        block_l: int = 256,
+        checkpoint: bool = True,
+        tile_b: Optional[int] = None,
+        tile_d: Optional[int] = None,
     ) -> torch.Tensor:
-        """
-        
-        
-        This casts to float16 for performance gains
-        Switch to fp32 if you encounter NaN issues
-        Empirically speaking, once the model is past the initial few thousand training steps,
-        outliers in the scan virtually entirely dissappear.
-        But you may need to start out with fp32
-        
-        """
         B, L, D = x.shape
-        # B is the batch size
-        # L is the sequence length
-        # D is the hidden dimension
-        # assert L is a power of 2
-        assert(L & (L - 1)) == 0, "L must be a power of 2"
+        if (L & (L - 1)) != 0:
+            raise ValueError("Sequence length L must currently be a power of 2.")
 
         residual = x
-        x = self.pre_norm(x)
+        x_norm = self.pre_norm(x)
 
-        A_elements = self.A_proj(x)
+        a = torch.sigmoid(self.A_proj(x_norm))              # [B, L, state_dim]
+        b = self.B_proj(x_norm)                             # input transform
+        c = torch.sigmoid(self.C_proj(x_norm))              # output gate
+        d = torch.sigmoid(self.D_proj(x_norm))              # input gate
 
-        x_elements = self.x_proj(x)
-        sidegate_elements = torch.sigmoid(self.output_proj(x))
-        gate = torch.sigmoid(self.sidegate_proj(x))
+        # Cast to compute dtype for the kernel; outputs will be cast back later
+        a = a.to(self.compute_dtype)
+        b = b.to(self.compute_dtype)
+        c = c.to(self.compute_dtype)
+        d = d.to(self.compute_dtype)
 
-        A_elements = F.sigmoid(A_elements)
+        h = scan(
+            x=b,  # treat projected input as x in the recurrence
+            a=a,
+            b=d,
+            c=c,
+            block_l=block_l,
+            checkpoint=checkpoint,
+            tile_b=tile_b,
+            tile_d=tile_d,
+            out_dtype=self.compute_dtype,
+        )
 
-        A_elements = A_elements.to(self.compute_dtype)
-        x_elements = x_elements.to(self.compute_dtype)
-        sidegate_elements = sidegate_elements.to(self.compute_dtype)
-        gate = gate.to(self.compute_dtype)
-        
+        y = self.out_proj(h.to(self.out_proj.weight.dtype))
+        return y + residual
 
 
-        #   a = State transition vector
-        #   x = Input sequence
-        #   b = Input gate
-        #   c = Sidegate
-
-        # The recurrence is h(t) = A(t) * h(t-1) + b(t) * u(t)
-        # The output is y(t) = gate(t) * h(t)
-
-        h = scan(A_elements, x_elements, sidegate_elements, gate)
-
-        h = self.wo(h)
-
-        return h + residual
-
+__all__ = ["SSM", "RMSNorm"]
 
