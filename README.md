@@ -130,6 +130,12 @@ python copy_train.py --steps 200 --seq-len 64 --batch-size 16
 
 Tune VRAM via `tile_b`, `tile_d`, `block_l` inside the script or in `quick_ssm.layers.SSM`.
 
+### Precision Benchmark (teacher-forced copy, seq=8)
+12‑layer stack, hidden=256, state=1024, batch=32, warmup 500 + cosine LR, teacher forcing. fp32 converges fastest; fp16 and bf16 follow closely.
+
+![Loss vs step](assets/precision_loss.png)
+![Accuracy vs step](assets/precision_acc.png)
+
 
 
 ## Core Concept: SSM Scan
