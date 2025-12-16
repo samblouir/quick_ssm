@@ -38,14 +38,21 @@ class CopyModel(nn.Module):
         return self.head(h)
 
 
-def build_teacher_batch(batch_size: int, seq_len: int, device: torch.device):
+def build_teacher_batch(batch_size: int, seq_len: int, device: torch.device, start_token: int = 0):
     """
     Build inputs/labels for teacher-forced copying:
-      inputs  = [src, src]
+      inputs  = [src, start + src[:-1]]
       labels  = [-100, src]  (mask loss on first half)
     """
     src = sample_batch(batch_size, seq_len, device)
-    inp = torch.cat([src, src], dim=1)
+    tf_part = torch.cat(
+        [
+            torch.full((batch_size, 1), start_token, device=device, dtype=src.dtype),
+            src[:, :-1],
+        ],
+        dim=1,
+    )
+    inp = torch.cat([src, tf_part], dim=1)
     labels = torch.cat([torch.full_like(src, -100), src], dim=1)
     return inp, labels
 
@@ -60,7 +67,7 @@ def train(args):
 
     for step in range(1, args.steps + 1):
         if args.teacher_forcing:
-            tokens, labels = build_teacher_batch(args.batch_size, args.seq_len, device)
+            tokens, labels = build_teacher_batch(args.batch_size, args.seq_len, device, start_token=0)
         else:
             tokens = sample_batch(args.batch_size, args.seq_len, device)
             labels = tokens
